@@ -3,15 +3,10 @@ package main
 import "testing"
 
 func TestIssue275Tuples(t *testing.T) {
-	mainFilename, err := generate(t, issue275Tuples)
-	if err != nil {
-		t.Fatalf("generate failed: %v", err)
-	}
-	goExec(t, mainFilename, false) // exec go run
-	goExec(t, mainFilename, true)  // exec go test
+	runTest(t, issue275Tuples)
 }
 
-var issue275Tuples = `package main
+const issue275Tuples = `package main
 
 import (
 	"fmt"

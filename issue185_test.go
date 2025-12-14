@@ -1,22 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
 	"text/template"
-
-	"github.com/tinylib/msgp/gen"
 )
 
-// When stuff's going wrong, you'll be glad this is here!
-const debugTemp = false
+var (
+	issue185IdentsTpl        = template.Must(template.New("").Parse(issue185Idents))
+	issue185ComplexIdentsTpl = template.Must(template.New("").Parse(issue185ComplexIdents))
+)
+
+type issue185TplData struct {
+	Extra bool
+}
 
 // Ensure that consistent identifiers are generated on a per-method basis by msgp.
 //
@@ -37,16 +40,14 @@ func TestIssue185Idents(t *testing.T) {
 
 	for idx, identCase := range identCases {
 		// generate the code, extract the generated variable names, mapped to function name
-		var tplData issue185TplData
-		varsBefore, err := loadVars(t, identCase.tpl, tplData)
+		varsBefore, err := loadVars(t, identCase.tpl, issue185TplData{Extra: false})
 		if err != nil {
 			t.Fatalf("%d: could not extract before vars: %v", idx, err)
 		}
 
 		// regenerate the code with extra field(s), extract the generated variable
 		// names, mapped to function name
-		tplData.Extra = true
-		varsAfter, err := loadVars(t, identCase.tpl, tplData)
+		varsAfter, err := loadVars(t, identCase.tpl, issue185TplData{Extra: true})
 		if err != nil {
 			t.Fatalf("%d: could not extract after vars: %v", idx, err)
 		}
@@ -83,25 +84,21 @@ func TestIssue185Idents(t *testing.T) {
 	}
 }
 
-type issue185TplData struct {
-	Extra bool
-}
-
 func TestIssue185Overlap(t *testing.T) {
 	overlapCases := []struct {
-		tpl  *template.Template
-		data issue185TplData
+		tpl   *template.Template
+		extra bool
 	}{
-		{tpl: issue185IdentsTpl, data: issue185TplData{Extra: false}},
-		{tpl: issue185IdentsTpl, data: issue185TplData{Extra: true}},
-		{tpl: issue185ComplexIdentsTpl, data: issue185TplData{Extra: false}},
-		{tpl: issue185ComplexIdentsTpl, data: issue185TplData{Extra: true}},
+		{tpl: issue185IdentsTpl, extra: false},
+		{tpl: issue185IdentsTpl, extra: true},
+		{tpl: issue185ComplexIdentsTpl, extra: false},
+		{tpl: issue185ComplexIdentsTpl, extra: true},
 	}
 
 	for idx, o := range overlapCases {
 		// regenerate the code with extra field(s), extract the generated variable
 		// names, mapped to function name
-		mvars, err := loadVars(t, o.tpl, o.data)
+		mvars, err := loadVars(t, o.tpl, issue185TplData{Extra: o.extra})
 		if err != nil {
 			t.Fatalf("%d: could not extract after vars: %v", idx, err)
 		}
@@ -133,29 +130,21 @@ func TestIssue185Overlap(t *testing.T) {
 	}
 }
 
-func loadVars(t *testing.T, tpl *template.Template, tplData any) (vars extractedVars, err error) {
-	tempDir := t.TempDir()
+func loadVars(t *testing.T, tpl *template.Template, tplData any) (extractedVars, error) {
+	t.Helper()
 
-	if !debugTemp {
-		defer os.RemoveAll(tempDir)
-	} else {
-		fmt.Println(tempDir)
-	}
-	tfile := filepath.Join(tempDir, "msg.go")
-	genFile := newFilename(tfile, "")
+	buf := new(bytes.Buffer)
 
-	if err = goGenerateTpl(tempDir, tfile, tpl, tplData); err != nil {
-		err = fmt.Errorf("could not generate code: %v", err)
-		return
+	if err := tpl.Execute(buf, tplData); err != nil {
+		return nil, err
 	}
 
-	vars, err = extractVars(genFile)
+	_, genFile, err := generate(t, buf.String())
 	if err != nil {
-		err = fmt.Errorf("could not extract after vars: %v", err)
-		return
+		return nil, err
 	}
 
-	return
+	return extractVars(genFile)
 }
 
 type varVisitor struct {
@@ -163,7 +152,7 @@ type varVisitor struct {
 	fset *token.FileSet
 }
 
-func (v *varVisitor) Visit(node ast.Node) (w ast.Visitor) {
+func (v *varVisitor) Visit(node ast.Node) ast.Visitor {
 	gen, ok := node.(*ast.GenDecl)
 	if !ok {
 		return v
@@ -187,10 +176,10 @@ func (e extractedVars) Value(key string) []string {
 	panic(fmt.Errorf("unknown key %s", key))
 }
 
-func extractVars(file string) (extractedVars, error) {
+func extractVars(filename string) (extractedVars, error) {
 	fset := token.NewFileSet()
 
-	f, err := parser.ParseFile(fset, file, nil, 0)
+	f, err := parser.ParseFile(fset, filename, nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -218,24 +207,7 @@ func extractVars(file string) (extractedVars, error) {
 	return vars, nil
 }
 
-func goGenerateTpl(cwd, tfile string, tpl *template.Template, tplData any) error {
-	outf, err := os.OpenFile(tfile, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer outf.Close()
-
-	if err := tpl.Execute(outf, tplData); err != nil {
-		return err
-	}
-
-	mode := gen.Encode | gen.Decode | gen.Size | gen.Marshal | gen.Unmarshal
-
-	return Run(tfile, mode, false)
-}
-
-var issue185IdentsTpl = template.Must(template.New("").Parse(`
-package issue185
+const issue185Idents = `package issue185
 
 //go:generate msgp
 
@@ -251,10 +223,9 @@ type Test2 struct {
 	Bar string
 	Baz string
 }
-`))
+`
 
-var issue185ComplexIdentsTpl = template.Must(template.New("").Parse(`
-package issue185
+const issue185ComplexIdents = `package issue185
 
 //go:generate msgp
 
@@ -299,4 +270,4 @@ type Test3 struct {
 	Bar string
 	Baz string
 }
-`))
+`

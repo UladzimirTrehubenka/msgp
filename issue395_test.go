@@ -2,17 +2,11 @@ package main
 
 import "testing"
 
-func TestIssue395TupleAllownil(t *testing.T) {
-	mainFilename, err := generate(t, issue395TupleAllownil)
-	if err != nil {
-		t.Fatalf("generate failed: %v", err)
-	}
-
-	goExec(t, mainFilename, false) // exec go run
-	goExec(t, mainFilename, true)  // exec go test
+func TestIssue395TupleAllowNil(t *testing.T) {
+	runTest(t, issue395TupleAllowNil)
 }
 
-var issue395TupleAllownil = `package main
+const issue395TupleAllowNil = `package main
 
 import (
 	"fmt"

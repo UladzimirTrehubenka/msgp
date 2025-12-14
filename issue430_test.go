@@ -2,17 +2,11 @@ package main
 
 import "testing"
 
-func TestIssue430Nested(t *testing.T) {
-	mainFilename, err := generate(t, issue430Nested)
-	if err != nil {
-		t.Fatalf("generate failed: %v", err)
-	}
-
-	goExec(t, mainFilename, false) // exec go run
-	goExec(t, mainFilename, true)  // exec go test
+func TestIssue430NestedObj(t *testing.T) {
+	runTest(t, issue430NestedObj)
 }
 
-var issue430Nested = `package main
+const issue430NestedObj = `package main
 
 import (
 	"fmt"

@@ -10,51 +10,68 @@ import (
 	"github.com/tinylib/msgp/gen"
 )
 
+// When stuff's going wrong, you'll be glad this is here!
 const showGeneratedFile = false
 
-func generate(t *testing.T, content string) (string, error) {
+func rename(filename, suffix, newSuffix string) string {
+	return strings.TrimSuffix(filename, suffix) + newSuffix
+}
+
+// generate - returns filename, filenameGen, error
+func generate(t *testing.T, content string) (string, string, error) {
+	t.Helper()
+
 	tempDir := t.TempDir()
 
-	mainFilename := filepath.Join(tempDir, "main.go")
+	filename := filepath.Join(tempDir, "main.go")
 
-	fd, err := os.OpenFile(mainFilename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	fd, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer fd.Close()
 
 	if _, err := fd.WriteString(content); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	mode := gen.Encode | gen.Decode | gen.Size | gen.Marshal | gen.Unmarshal | gen.Test
-	if err := Run(mainFilename, mode, false); err != nil {
-		return "", err
+	if err := Run(filename, mode, false); err != nil {
+		return "", "", err
 	}
+
+	filenameGen := rename(filename, ".go", "_gen.go")
 
 	if showGeneratedFile {
-		mainGenFilename := strings.TrimSuffix(mainFilename, ".go") + "_gen.go"
-		content, err := os.ReadFile(mainGenFilename)
+		content, err := os.ReadFile(filenameGen)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		t.Logf("generated %s content:\n%s", mainGenFilename, content)
+		t.Logf("generated %s content:\n%s", filenameGen, content)
 	}
 
-	return mainFilename, nil
+	return filename, filenameGen, nil
 }
 
-func goExec(t *testing.T, mainFilename string, test bool) {
-	mainGenFilename := strings.TrimSuffix(mainFilename, ".go") + "_gen.go"
-
-	args := []string{"run", mainFilename, mainGenFilename}
-	if test {
-		mainGenTestFilename := strings.TrimSuffix(mainFilename, ".go") + "_gen_test.go"
-		args = []string{"test", mainFilename, mainGenFilename, mainGenTestFilename}
-	}
+func goExec(t *testing.T, args ...string) {
+	t.Helper()
 
 	output, err := exec.Command("go", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("go run failed: %v, output:\n%s", err, output)
 	}
+}
+
+func runTest(t *testing.T, content string) {
+	t.Helper()
+
+	filename, filenameGen, err := generate(t, content)
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+
+	filenameGenTest := rename(filenameGen, "_gen.go", "_gen_test.go")
+
+	goExec(t, "run", filename, filenameGen)
+	goExec(t, "test", filename, filenameGen, filenameGenTest)
 }
